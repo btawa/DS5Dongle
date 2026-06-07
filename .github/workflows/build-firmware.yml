@@ -1,9 +1,9 @@
 name: Build firmware (reusable)
 
 # Reusable build used by build.yml, release.yml and daily-upstream-release.yml.
-# Always builds the standard and debug UF2s for a given ref; optionally also
-# the Pico W UF2 and a no-batt-led compile check. When `upload_tag` is set the
-# built UF2s are attached to that GitHub Release.
+# Always builds the standard, debug, and no-speaker UF2s for a given ref;
+# optionally also the Pico W UF2, USB-wake UF2, and a no-batt-led compile check.
+# When `upload_tag` is set, the built UF2s are attached to that GitHub Release.
 
 on:
   workflow_call:
@@ -44,7 +44,7 @@ on:
         type: boolean
         default: false
       usbwake:
-        description: Enable USB Wake feature (-DENABLE_WAKE_HID=ON)
+        description: Also build the USB Wake UF2 (-DENABLE_WAKE_HID=ON)
         required: false
         type: boolean
         default: false
@@ -82,8 +82,6 @@ jobs:
           IN_VER: ${{ inputs.version }}
         run: |
           v="$IN_VER"
-          # A full 40-char commit SHA (build.yml passes github.sha) is
-          # shortened to 7 chars, matching the previous build.yml behaviour.
           if printf '%s' "$v" | grep -qE '^[0-9a-f]{40}$'; then
             v="${v:0:7}"
           fi
@@ -185,36 +183,29 @@ jobs:
           cp build/picow/ds5-bridge.uf2 "artifacts/ds5-bridge-picow${{ inputs.asset_suffix }}.uf2"
 
       - name: Build USB-Wake firmware
-        if: inputs.picow
+        if: inputs.usbwake
         run: |
           VERSION_ARG=()
           [ -n "${FW_VER:-}" ] && VERSION_ARG=(-DVERSION="$FW_VER")
-          cmake -S . -B build/picow -G Ninja \
+          cmake -S . -B build/usbwake -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DPICO_SDK_PATH="$PICO_SDK_PATH" \
             -DENABLE_WAKE_HID=ON \
             "${VERSION_ARG[@]}"
-          cmake --build build/picow --target ds5-bridge
-          cp build/picow/ds5-bridge.uf2 "artifacts/ds5-bridge-usbwake${{ inputs.asset_suffix }}.uf2"
+          cmake --build build/usbwake --target ds5-bridge
+          cp build/usbwake/ds5-bridge.uf2 "artifacts/ds5-bridge-usbwake${{ inputs.asset_suffix }}.uf2"
 
-#      - name: Build no-batt-led firmware (compile check only)
-#        if: inputs.no_batt_led_check
-#        run: |
-#          VERSION_ARG=()
-#          [ -n "${FW_VER:-}" ] && VERSION_ARG=(-DVERSION="$FW_VER")
-#          cmake -S . -B build/no-batt-led -G Ninja \
-#            -DCMAKE_BUILD_TYPE=Release \
-#            -DPICO_SDK_PATH="$PICO_SDK_PATH" \
-#            -DENABLE_BATT_LED=OFF \
-#            "${VERSION_ARG[@]}"
-#          cmake --build build/no-batt-led --target ds5-bridge
-
-      # - name: Upload UF2 artifacts
-        # uses: actions/upload-artifact@v7
-        # with:
-          # name: ds5-bridge-uf2${{ inputs.asset_suffix }}
-          # path: artifacts/*.uf2
-          # if-no-files-found: error- name: Upload standard UF2 artifact
+      - name: Build no-batt-led firmware (compile check only)
+        if: inputs.no_batt_led_check
+        run: |
+          VERSION_ARG=()
+          [ -n "${FW_VER:-}" ] && VERSION_ARG=(-DVERSION="$FW_VER")
+          cmake -S . -B build/no-batt-led -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPICO_SDK_PATH="$PICO_SDK_PATH" \
+            -DENABLE_BATT_LED=OFF \
+            "${VERSION_ARG[@]}"
+          cmake --build build/no-batt-led --target ds5-bridge
 
       - uses: actions/upload-artifact@v7
         with:
@@ -262,7 +253,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Pin to the workflow's own repo: when inputs.repo is set we checked
-          # out a different repo, so the local git remote must not decide this.
           gh release upload "${{ inputs.upload_tag }}" artifacts/*.uf2 \
             --repo "${{ github.repository }}" --clobber
