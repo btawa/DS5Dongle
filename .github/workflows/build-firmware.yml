@@ -1,9 +1,9 @@
 name: Build firmware (reusable)
 
 # Reusable build used by build.yml, release.yml and daily-upstream-release.yml.
-# Always builds the standard and debug UF2s for a given ref; optionally also
-# the Pico W UF2 and a no-batt-led compile check. When `upload_tag` is set the
-# built UF2s are attached to that GitHub Release.
+# Always builds the standard, debug, and no-speaker UF2s for a given ref;
+# optionally also the Pico W UF2, USB-wake UF2, and a no-batt-led compile check.
+# When `upload_tag` is set, the built UF2s are attached to that GitHub Release.
 
 on:
   workflow_call:
@@ -43,6 +43,11 @@ on:
         required: false
         type: boolean
         default: false
+      usbwake:
+        description: Also build the USB Wake UF2 (-DENABLE_WAKE_HID=ON)
+        required: false
+        type: boolean
+        default: false
 
 env:
   PICO_SDK_REF: 2.2.0
@@ -77,8 +82,6 @@ jobs:
           IN_VER: ${{ inputs.version }}
         run: |
           v="$IN_VER"
-          # A full 40-char commit SHA (build.yml passes github.sha) is
-          # shortened to 7 chars, matching the previous build.yml behaviour.
           if printf '%s' "$v" | grep -qE '^[0-9a-f]{40}$'; then
             v="${v:0:7}"
           fi
@@ -154,6 +157,18 @@ jobs:
           cmake --build build/debug --target ds5-bridge
           cp build/debug/ds5-bridge.uf2 "artifacts/ds5-bridge-debug${{ inputs.asset_suffix }}.uf2"
 
+      - name: Build No Speaker firmware (no overclock)
+        run: |
+          VERSION_ARG=()
+          [ -n "${FW_VER:-}" ] && VERSION_ARG=(-DVERSION="$FW_VER")
+          cmake -S . -B build/nospeaker -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPICO_SDK_PATH="$PICO_SDK_PATH" \
+            -DDISABLE_SPEAKER_PROC=ON \
+            "${VERSION_ARG[@]}"
+          cmake --build build/nospeaker --target ds5-bridge
+          cp build/nospeaker/ds5-bridge.uf2 "artifacts/ds5-bridge-no-oc-and-spk${{ inputs.asset_suffix }}.uf2"
+
       - name: Build Pico W firmware
         if: inputs.picow
         run: |
@@ -167,6 +182,19 @@ jobs:
           cmake --build build/picow --target ds5-bridge
           cp build/picow/ds5-bridge.uf2 "artifacts/ds5-bridge-picow${{ inputs.asset_suffix }}.uf2"
 
+      - name: Build USB-Wake firmware
+        if: inputs.usbwake
+        run: |
+          VERSION_ARG=()
+          [ -n "${FW_VER:-}" ] && VERSION_ARG=(-DVERSION="$FW_VER")
+          cmake -S . -B build/usbwake -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPICO_SDK_PATH="$PICO_SDK_PATH" \
+            -DENABLE_WAKE_HID=ON \
+            "${VERSION_ARG[@]}"
+          cmake --build build/usbwake --target ds5-bridge
+          cp build/usbwake/ds5-bridge.uf2 "artifacts/ds5-bridge-usbwake${{ inputs.asset_suffix }}.uf2"
+
       - name: Build no-batt-led firmware (compile check only)
         if: inputs.no_batt_led_check
         run: |
@@ -178,13 +206,6 @@ jobs:
             -DENABLE_BATT_LED=OFF \
             "${VERSION_ARG[@]}"
           cmake --build build/no-batt-led --target ds5-bridge
-
-      # - name: Upload UF2 artifacts
-        # uses: actions/upload-artifact@v7
-        # with:
-          # name: ds5-bridge-uf2${{ inputs.asset_suffix }}
-          # path: artifacts/*.uf2
-          # if-no-files-found: error- name: Upload standard UF2 artifact
 
       - uses: actions/upload-artifact@v7
         with:
@@ -199,19 +220,38 @@ jobs:
           archive: false
           if-no-files-found: error
 
+      - name: Upload No Speaker firmware (no overclock)
+        uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/ds5-bridge-no-oc-and-spk${{ inputs.asset_suffix }}.uf2
+          archive: false
+          if-no-files-found: error
+
       - name: Upload PicoW UF2 artifact
+        if: inputs.picow
         uses: actions/upload-artifact@v7
         with:
           path: artifacts/ds5-bridge-picow${{ inputs.asset_suffix }}.uf2
           archive: false
           if-no-files-found: error
 
+      - name: Upload USBWake UF2 artifact
+        if: inputs.usbwake
+        uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/ds5-bridge-usbwake${{ inputs.asset_suffix }}.uf2
+          archive: false
+          if-no-files-found: error
+
+      - name: Remove debug firmware before release upload
+        if: inputs.upload_tag != ''
+        run: |
+          rm -f "artifacts/ds5-bridge-debug${{ inputs.asset_suffix }}.uf2"
+
       - name: Attach UF2s to release
         if: inputs.upload_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Pin to the workflow's own repo: when inputs.repo is set we checked
-          # out a different repo, so the local git remote must not decide this.
           gh release upload "${{ inputs.upload_tag }}" artifacts/*.uf2 \
             --repo "${{ github.repository }}" --clobber
