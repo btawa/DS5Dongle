@@ -42,8 +42,13 @@ void state_init() {
 }
 
 void state_set(uint8_t *data, const uint8_t size) {
-    if (size > 63) {
-        printf("[StateMgr] Warning: State Set over 63 bytes\n");
+    if (size > sizeof(state)) {
+        printf(
+            "[StateMgr] Error: SetStateData max %u bytes, request %u\n",
+            static_cast<unsigned>(sizeof(state)),
+            size
+        );
+        return;
     }
     memcpy(data, &state, size);
 }

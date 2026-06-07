@@ -52,6 +52,9 @@ struct send_element {
     size_t len;
 };
 
+constexpr uint16_t kMinInterruptIdlePacketLen = 13;
+constexpr uint16_t kBtSendHeaderLen = 1;
+
 absolute_time_t inactive_time = 0; // 手柄长时间静默
 
 void bt_register_data_callback(bt_data_callback_t callback) {
@@ -377,6 +380,10 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
         if (channel == hid_interrupt_cid) {
             // printf("[L2CAP] HID Interrupt data len=%u\n", size);
             // printf_hexdump(packet, size);
+            if (size < kMinInterruptIdlePacketLen) {
+                printf("[L2CAP] Drop short HID Interrupt packet len=%u\n", size);
+                return;
+            }
             bt_data_callback(INTERRUPT, packet, size);
 
             // 静默检测
@@ -398,8 +405,12 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
                 bt_disconnect();
             }
         } else if (channel == hid_control_cid) {
+            if (size == 0) {
+                printf("[L2CAP] Drop empty HID Control packet\n");
+                return;
+            }
             if (check_dse) {
-                if (packet[0] == 0xA3 && packet[1] == 0x70) {
+                if (size >= 2 && packet[0] == 0xA3 && packet[1] == 0x70) {
                     printf("Connected DSE Controller\n");
                     check_dse = false;
                     is_dse = true;
@@ -415,7 +426,7 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
 #endif
                 }
             }
-            if (packet[0] == 0xA3) {
+            if (packet[0] == 0xA3 && size >= 2) {
                 uint8_t report_id = packet[1];
                 feature_data[report_id].assign(packet + 1, packet + size);
 #if ENABLE_VERBOSE
@@ -541,6 +552,10 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
 
 void bt_write(const uint8_t *data, const uint16_t len) {
     if (hid_interrupt_cid == 0) return;
+    if (len < 4 || len + kBtSendHeaderLen > sizeof(send_element::data)) {
+        printf("[L2CAP bt_write] Error: invalid packet len=%u\n", len);
+        return;
+    }
     static send_element packet{};
     memset(packet.data, 0, 512);
     packet.len = len + 1;

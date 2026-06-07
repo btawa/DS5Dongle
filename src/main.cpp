@@ -2,6 +2,7 @@
 // Created by awalol on 2026/3/4.
 //
 
+#include <algorithm>
 #include <cstdio>
 #include "bsp/board_api.h"
 #include "bt.h"
@@ -84,7 +85,10 @@ void interrupt_loop() {
 
 void on_bt_data(CHANNEL_TYPE channel, uint8_t *data, uint16_t len) {
     // printf("[Main] BT data callback: channel=%u len=%u\n", channel, len);
-    if (channel == INTERRUPT && data[1] == 0x31) {
+    constexpr uint16_t kBtInputReportHeaderLen = 3;
+    constexpr uint16_t kBtInputReportLen = kBtInputReportHeaderLen + sizeof(interrupt_in_data);
+
+    if (channel == INTERRUPT && len >= kBtInputReportLen && data[1] == 0x31) {
         if ((data[56] & 1) != (interrupt_in_data[53] & 1)) {
             set_headset(data[56] & 1);
         }
@@ -145,10 +149,12 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
 
     std::vector<uint8_t> feature_data = get_feature_data(report_id, reqlen);
     if (!feature_data.empty()) {
-        memcpy(buffer, feature_data.data() + 1, feature_data.size() - 1);
+        const auto len = std::min(static_cast<size_t>(reqlen), feature_data.size() - 1);
+        memcpy(buffer, feature_data.data() + 1, len);
+        return len;
     }
 
-    return feature_data.empty() ? 0 : feature_data.size() - 1;
+    return 0;
 }
 
 bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const *p_request) {
