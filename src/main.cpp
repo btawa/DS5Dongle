@@ -43,7 +43,6 @@ uint8_t interrupt_in_data[63] = {
 };
 
 critical_section_t report_cs;
-volatile bool report_dirty = false;
 
 void interrupt_loop() {
     if (!tud_hid_ready()) return;
@@ -56,30 +55,16 @@ void interrupt_loop() {
         return;
     }
 
-    bool should_send = false;
-    // Local buffer to hold the report data while we prepare it to send. 
+    // In 1 ms mode, keep USB report cadence steady by repeating the latest
+    // Bluetooth state instead of only sending when a fresh BT packet arrives.
     uint8_t safe_report[63];
 
-
     critical_section_enter_blocking(&report_cs);
-    if (report_dirty) {
-        memcpy(safe_report, interrupt_in_data, 63);
-        report_dirty = false;
-        should_send = true;
-    }
+    memcpy(safe_report, interrupt_in_data, 63);
     critical_section_exit(&report_cs);
 
-    // Only send to TinyUSB if we actually grabbed fresh data
-    if (should_send) {
-        if (!tud_hid_report(0x01, safe_report, 63)) {
-            printf("[USBHID] tud_hid_report error\n");
-
-            // If the report failed to queue, restore the dirty flag 
-            // so we try again on the next loop iteration.
-            critical_section_enter_blocking(&report_cs);
-            report_dirty = true;
-            critical_section_exit(&report_cs);
-        }
+    if (!tud_hid_report(0x01, safe_report, 63)) {
+        printf("[USBHID] tud_hid_report error\n");
     }
 }
 
@@ -107,15 +92,9 @@ void on_bt_data(CHANNEL_TYPE channel, uint8_t *data, uint16_t len) {
             return;
         }
 
-        // We add the critical section here to avoid any race conditions when writing to the interrupt_in_data buffer,
-        // which is shared between the main loop and this callback.
-        // The critical section ensures that only one thread can access the buffer at a time,
-        // preventing data corruption and ensuring thread safety.
-        // We also set the report_dirty flag to true to indicate that new data is available
-        //  and needs to be sent in the next interrupt report.
+        // Protect the shared report buffer while 1 ms USB mode reads from it.
         critical_section_enter_blocking(&report_cs);
         memcpy(interrupt_in_data, data + 3, 63);
-        report_dirty = true;
         critical_section_exit(&report_cs);
 #if ENABLE_BATT_LED
         battery_led_note_report();
