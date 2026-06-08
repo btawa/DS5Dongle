@@ -1,5 +1,5 @@
 //
-// Low-battery LED indicator. See battery_led.h.
+// Pico onboard LED status indicator. See battery_led.h.
 //
 
 #include "battery_led.h"
@@ -16,10 +16,12 @@ namespace {
 
 constexpr uint64_t REPORT_STALE_US = 2'000'000;  // assume disconnected if no report for 2 s
 constexpr uint64_t BLINK_PERIOD_US =   500'000;  // 1 Hz, 50% duty
+constexpr uint64_t ACTIVITY_PULSE_US =  40'000;  // visible pulse for input activity
 constexpr uint8_t  THRESHOLD_LEVEL = 1;          // PowerPercent <= 1 (i.e. <= 10%)
 constexpr uint8_t  POWER_STATE_DISCHARGING = 0x0;
 
 uint64_t last_report_us = 0;
+uint64_t last_activity_us = 0;
 uint64_t last_toggle_us = 0;
 bool     blinking       = false;
 bool     led_state      = false;
@@ -28,6 +30,7 @@ bool     led_state      = false;
 
 void battery_led_init(void) {
     last_report_us = 0;
+    last_activity_us = 0;
     last_toggle_us = 0;
     blinking = false;
     led_state = false;
@@ -35,6 +38,10 @@ void battery_led_init(void) {
 
 void battery_led_note_report(void) {
     last_report_us = time_us_64();
+}
+
+void battery_led_note_activity(void) {
+    last_activity_us = time_us_64();
 }
 
 void battery_led_on_disconnect(void) {
@@ -45,6 +52,7 @@ void battery_led_on_disconnect(void) {
     blinking = false;
     led_state = false;
     last_report_us = 0;
+    last_activity_us = 0;
     last_toggle_us = 0;
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
 }
@@ -55,7 +63,7 @@ void battery_led_tick(void) {
         // No fresh data — bt.cpp owns the LED while disconnected. If we
         // were mid-blink when the report went stale, force the LED off
         // so it doesn't freeze in whichever half-cycle it was in.
-        if (blinking) {
+        if (blinking || led_state) {
             blinking = false;
             led_state = false;
             cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
@@ -85,7 +93,16 @@ void battery_led_tick(void) {
     } else if (blinking) {
         blinking = false;
         // Battery recovered or now charging — restore steady-state LED per the user
-        // preference flag (LED off when disabled, otherwise the bt.cpp connected = on state).
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, !get_config().disable_pico_led);
+        // preference flag; normal activity handling below owns the non-critical state.
+        led_state = false;
+        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
+    }
+
+    const bool activity_on = !get_config().disable_pico_led &&
+                             last_activity_us != 0 &&
+                             (now - last_activity_us) < ACTIVITY_PULSE_US;
+    if (led_state != activity_on) {
+        led_state = activity_on;
+        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_state);
     }
 }

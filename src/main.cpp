@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include "bsp/board_api.h"
 #include "bt.h"
 #include "utils.h"
@@ -44,6 +45,16 @@ uint8_t interrupt_in_data[63] = {
 
 critical_section_t report_cs;
 
+namespace {
+
+constexpr uint16_t kActivityBytes = 10;
+
+bool report_has_input_activity(const uint8_t *report) {
+    return memcmp(interrupt_in_data, report, kActivityBytes) != 0;
+}
+
+}  // namespace
+
 void interrupt_loop() {
     if (!tud_hid_ready()) return;
 
@@ -74,6 +85,8 @@ void on_bt_data(CHANNEL_TYPE channel, uint8_t *data, uint16_t len) {
     constexpr uint16_t kBtInputReportLen = kBtInputReportHeaderLen + sizeof(interrupt_in_data);
 
     if (channel == INTERRUPT && len >= kBtInputReportLen && data[1] == 0x31) {
+        const bool input_activity = report_has_input_activity(data + 3);
+
         if ((data[56] & 1) != (interrupt_in_data[53] & 1)) {
             set_headset(data[56] & 1);
         }
@@ -88,6 +101,9 @@ void on_bt_data(CHANNEL_TYPE channel, uint8_t *data, uint16_t len) {
             memcpy(interrupt_in_data, data + 3, 63);
 #if ENABLE_BATT_LED
             battery_led_note_report();
+            if (input_activity) {
+                battery_led_note_activity();
+            }
 #endif
             return;
         }
@@ -98,6 +114,9 @@ void on_bt_data(CHANNEL_TYPE channel, uint8_t *data, uint16_t len) {
         critical_section_exit(&report_cs);
 #if ENABLE_BATT_LED
         battery_led_note_report();
+        if (input_activity) {
+            battery_led_note_activity();
+        }
 #endif
     }
 }

@@ -178,11 +178,7 @@ void set_config(const uint8_t *new_config, const uint16_t len) {
     const auto copy_len = len < sizeof(Config_body) ? len : sizeof(Config_body);
     memcpy(&config.body, new_config, copy_len);
     config_valid();
-    if (config.body.disable_pico_led) {
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
-    }else {
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, true);
-    }
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
     set_volume(config.body.speaker_volume,config.body.headset_volume);
     set_gain(config.body.speaker_gain);
 }
