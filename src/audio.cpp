@@ -32,8 +32,33 @@
 // #define VOLUME_GAIN       2
 // #define BUFFER_LENGTH     48
 
+#ifndef AUDIO_DIRECT_OPUS
+#define AUDIO_DIRECT_OPUS 0
+#endif
+
+#ifndef AUDIO_TIMING_DEBUG
+#define AUDIO_TIMING_DEBUG 0
+#endif
+
 using std::clamp;
 using std::max;
+
+namespace {
+
+constexpr uint32_t kOpusFrameCount = 480;
+constexpr uint32_t kSpeakerInputFrames = AUDIO_DIRECT_OPUS ? kOpusFrameCount : 512;
+constexpr uint32_t kSpeakerInputSamples = kSpeakerInputFrames * OUTPUT_CHANNELS;
+
+#if AUDIO_TIMING_DEBUG
+volatile uint32_t timing_usb_bytes = 0;
+volatile uint32_t timing_report36_count = 0;
+volatile uint32_t timing_opus_count = 0;
+volatile uint32_t timing_opus_total_us = 0;
+volatile uint32_t timing_opus_max_us = 0;
+volatile uint32_t timing_audio_queue_drops = 0;
+#endif
+
+}  // namespace
 
 static WDL_Resampler resampler;
 static uint8_t reportSeqCounter = 0;
@@ -45,7 +70,7 @@ static uint8_t opus_buf[200];
 critical_section_t opus_cs;
 
 struct audio_raw_element {
-    float data[512 * 2];
+    float data[kSpeakerInputSamples];
 };
 
 void set_headset(bool state) {
@@ -58,12 +83,15 @@ void audio_loop() {
 
     int16_t raw[192];
     uint32_t bytes_read = tud_audio_read(raw, sizeof(raw)); // 每次读入 384 bytes
+#if AUDIO_TIMING_DEBUG
+    timing_usb_bytes += bytes_read;
+#endif
     int frames = bytes_read / (INPUT_CHANNELS * sizeof(int16_t));
     if (frames == 0) {
         return;
     }
 
-    static float audio_buf[512 * 2];
+    static float audio_buf[kSpeakerInputSamples];
     static uint audio_buf_pos = 0;
     // 2. 从4ch中提取ch3/ch4，转换为float输入重采样器
     WDL_ResampleSample *in_buf;
@@ -75,11 +103,14 @@ void audio_loop() {
  #if !DISABLE_SPEAKER_PROC       
         audio_buf[audio_buf_pos++] = raw[i * INPUT_CHANNELS] / 32768.0f;
         audio_buf[audio_buf_pos++] = raw[i * INPUT_CHANNELS + 1] / 32768.0f;
-        if (audio_buf_pos == 512 * 2) {
+        if (audio_buf_pos == kSpeakerInputSamples) {
             static audio_raw_element element{};
-            memcpy(element.data, audio_buf, 512 * 2 * 4);
+            memcpy(element.data, audio_buf, sizeof(element.data));
             if (queue_is_full(&audio_fifo)) {
                 queue_try_remove(&audio_fifo,NULL);
+#if AUDIO_TIMING_DEBUG
+                timing_audio_queue_drops++;
+#endif
             }
             if (!queue_try_add(&audio_fifo, &element)) {
                 printf("[Audio] Warning: audio_fifo add failed\n");
@@ -144,9 +175,38 @@ void audio_loop() {
         critical_section_exit(&opus_cs);
 #endif
 
+#if AUDIO_TIMING_DEBUG
+        timing_report36_count++;
+#endif
         bt_write(pkt, sizeof(pkt));
         haptic_buf_pos = 0;
     }
+
+#if AUDIO_TIMING_DEBUG
+    static uint64_t last_log_us = 0;
+    const uint64_t now_us = time_us_64();
+    if (last_log_us == 0) {
+        last_log_us = now_us;
+    } else if ((now_us - last_log_us) >= 1'000'000) {
+        const uint32_t opus_count = timing_opus_count;
+        const uint32_t opus_avg_us = opus_count == 0 ? 0 : timing_opus_total_us / opus_count;
+        printf("[AudioTiming] mode=%s usb_bytes=%lu report36=%lu opus=%lu opus_avg_us=%lu opus_max_us=%lu queue_drops=%lu\n",
+               AUDIO_DIRECT_OPUS ? "direct480" : "resample512",
+               static_cast<unsigned long>(timing_usb_bytes),
+               static_cast<unsigned long>(timing_report36_count),
+               static_cast<unsigned long>(opus_count),
+               static_cast<unsigned long>(opus_avg_us),
+               static_cast<unsigned long>(timing_opus_max_us),
+               static_cast<unsigned long>(timing_audio_queue_drops));
+        timing_usb_bytes = 0;
+        timing_report36_count = 0;
+        timing_opus_count = 0;
+        timing_opus_total_us = 0;
+        timing_opus_max_us = 0;
+        timing_audio_queue_drops = 0;
+        last_log_us = now_us;
+    }
+#endif
 }
 
 void audio_init() {
@@ -181,14 +241,21 @@ void core1_entry() {
     opus_encoder_ctl(encoder,OPUS_SET_BITRATE(200 * 8 * 100));
     opus_encoder_ctl(encoder,OPUS_SET_VBR(false));
     opus_encoder_ctl(encoder,OPUS_SET_COMPLEXITY(0)); // max 4
+#if !AUDIO_DIRECT_OPUS
     resampler_audio.SetMode(true, 0, false);
     resampler_audio.SetRates(51200, 48000);
     resampler_audio.SetFeedMode(true);
     resampler_audio.Prealloc(2, 512, 480);
+#endif
 
     while (true) {
         static audio_raw_element audio_element{};
         queue_remove_blocking(&audio_fifo, &audio_element);
+#if AUDIO_DIRECT_OPUS
+        static uint8_t out[200];
+        const uint64_t encode_start_us = time_us_64();
+        (void) opus_encode_float(encoder, audio_element.data, kOpusFrameCount, out, 200);
+#else
         // 将 512 frames 重采样成 480 frames 以解决噪音问题。感谢 @Junhoo
         WDL_ResampleSample *in_buf;
         int nframes = resampler_audio.ResamplePrepare(512, 2, &in_buf);
@@ -199,7 +266,17 @@ void core1_entry() {
         resampler_audio.ResampleOut(out_buf, nframes, 480, 2);
 
         static uint8_t out[200];
+        const uint64_t encode_start_us = time_us_64();
         (void) opus_encode_float(encoder, out_buf, 480, out, 200);
+#endif
+#if AUDIO_TIMING_DEBUG
+        const uint32_t encode_us = static_cast<uint32_t>(time_us_64() - encode_start_us);
+        timing_opus_count++;
+        timing_opus_total_us += encode_us;
+        if (encode_us > timing_opus_max_us) {
+            timing_opus_max_us = encode_us;
+        }
+#endif
         critical_section_enter_blocking(&opus_cs);
         memcpy(opus_buf, out, 200);
         critical_section_exit(&opus_cs);

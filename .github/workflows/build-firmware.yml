@@ -48,6 +48,16 @@ on:
         required: false
         type: boolean
         default: false
+      audio_timing:
+        description: Also build a serial timing UF2 for audio cadence measurements (-DAUDIO_TIMING_DEBUG=ON)
+        required: false
+        type: boolean
+        default: false
+      audio_direct_opus:
+        description: Also build an experimental direct-Opus UF2 (-DAUDIO_DIRECT_OPUS=ON)
+        required: false
+        type: boolean
+        default: false
 
 env:
   PICO_SDK_REF: 2.2.0
@@ -195,6 +205,35 @@ jobs:
           cmake --build build/usbwake --target ds5-bridge
           cp build/usbwake/ds5-bridge.uf2 "artifacts/ds5-bridge-usbwake${{ inputs.asset_suffix }}.uf2"
 
+      - name: Build audio timing firmware
+        if: inputs.audio_timing
+        run: |
+          VERSION_ARG=()
+          [ -n "${FW_VER:-}" ] && VERSION_ARG=(-DVERSION="$FW_VER")
+          cmake -S . -B build/audio-timing -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPICO_SDK_PATH="$PICO_SDK_PATH" \
+            -DENABLE_SERIAL=ON \
+            -DAUDIO_TIMING_DEBUG=ON \
+            "${VERSION_ARG[@]}"
+          cmake --build build/audio-timing --target ds5-bridge
+          cp build/audio-timing/ds5-bridge.uf2 "artifacts/ds5-bridge-audio-timing${{ inputs.asset_suffix }}.uf2"
+
+      - name: Build direct-Opus audio timing firmware
+        if: inputs.audio_direct_opus
+        run: |
+          VERSION_ARG=()
+          [ -n "${FW_VER:-}" ] && VERSION_ARG=(-DVERSION="$FW_VER")
+          cmake -S . -B build/audio-direct-opus -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPICO_SDK_PATH="$PICO_SDK_PATH" \
+            -DENABLE_SERIAL=ON \
+            -DAUDIO_TIMING_DEBUG=ON \
+            -DAUDIO_DIRECT_OPUS=ON \
+            "${VERSION_ARG[@]}"
+          cmake --build build/audio-direct-opus --target ds5-bridge
+          cp build/audio-direct-opus/ds5-bridge.uf2 "artifacts/ds5-bridge-audio-direct-opus${{ inputs.asset_suffix }}.uf2"
+
       - name: Build no-batt-led firmware (compile check only)
         if: inputs.no_batt_led_check
         run: |
@@ -240,6 +279,22 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           path: artifacts/ds5-bridge-usbwake${{ inputs.asset_suffix }}.uf2
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload audio timing UF2 artifact
+        if: inputs.audio_timing
+        uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/ds5-bridge-audio-timing${{ inputs.asset_suffix }}.uf2
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload direct-Opus audio timing UF2 artifact
+        if: inputs.audio_direct_opus
+        uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/ds5-bridge-audio-direct-opus${{ inputs.asset_suffix }}.uf2
           archive: false
           if-no-files-found: error
 

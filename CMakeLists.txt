@@ -59,6 +59,18 @@ if (DISABLE_SPEAKER_PROC)
 else ()
         set(DISABLE_SPEAKER_PROC_VALUE 0)
 endif ()
+option(AUDIO_DIRECT_OPUS "Experimental: encode 480-frame Opus blocks directly without 512->480 speaker resampling" OFF)
+if (AUDIO_DIRECT_OPUS)
+        set(AUDIO_DIRECT_OPUS_VALUE 1)
+else ()
+        set(AUDIO_DIRECT_OPUS_VALUE 0)
+endif ()
+option(AUDIO_TIMING_DEBUG "Print audio timing counters once per second" OFF)
+if (AUDIO_TIMING_DEBUG)
+        set(AUDIO_TIMING_DEBUG_VALUE 1)
+else ()
+        set(AUDIO_TIMING_DEBUG_VALUE 0)
+endif ()
 if (PICO_W_BUILD)
         set(CYW43_PIO_CLOCK_DIV_VALUE 3)
         set(SYS_CLOCK_KHZ_VALUE 200000)
@@ -137,6 +149,8 @@ target_compile_definitions(ds5-bridge PRIVATE
         ENABLE_BATT_LED=${ENABLE_BATT_LED_VALUE}
         SYS_CLOCK_KHZ=${SYS_CLOCK_KHZ_VALUE}
         DISABLE_SPEAKER_PROC=${DISABLE_SPEAKER_PROC_VALUE}
+        AUDIO_DIRECT_OPUS=${AUDIO_DIRECT_OPUS_VALUE}
+        AUDIO_TIMING_DEBUG=${AUDIO_TIMING_DEBUG_VALUE}
 )
 
 option(ENABLE_WAKE_HID "Wake the Windows host on PS-button press" OFF)
