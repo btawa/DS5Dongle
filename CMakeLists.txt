@@ -68,7 +68,7 @@ else ()
             set(CYW43_PIO_CLOCK_DIV_VALUE 2)
             set(SYS_CLOCK_KHZ_VALUE 150000)
         else ()
-            set(CYW43_PIO_CLOCK_DIV_VALUE 5)
+            set(CYW43_PIO_CLOCK_DIV_VALUE 4)
             set(SYS_CLOCK_KHZ_VALUE 320000)
         endif ()
 endif ()
@@ -123,6 +123,7 @@ else()
     set(PICO_FLASH_SPI_CLKDIV 2)
 endif()
 target_compile_definitions(bs2_default PRIVATE PICO_FLASH_SPI_CLKDIV=${PICO_FLASH_SPI_CLKDIV})
+target_compile_definitions(ds5-bridge PRIVATE PICO_EMBED_XIP_SETUP=1)
 target_compile_definitions(ds5-bridge PRIVATE
         CYW43_LWIP=0
         ENABLE_SERIAL=${ENABLE_SERIAL_VALUE}
