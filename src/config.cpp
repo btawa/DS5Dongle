@@ -11,6 +11,7 @@
 #include "utils.h"
 #include "hardware/flash.h"
 #include "hardware/sync.h"
+#include "pico/multicore.h"
 #include "pico/cyw43_arch.h"
 
 constexpr uint32_t CONFIG_MAGIC = 0x66ccff00;
@@ -31,6 +32,31 @@ uint32_t calc_config_crc(const Config &con) {
 
 const Config *flash_config() {
     return reinterpret_cast<const Config *>(XIP_BASE + CONFIG_FLASH_OFFSET);
+}
+
+void config_default() {
+    config = {
+        .magic = CONFIG_MAGIC,
+        .crc32 = 0,
+        .size = sizeof(Config_body),
+        .body = {
+            .config_version = CONFIG_VERSION,
+            .haptics_gain = 1.0f,
+            .speaker_volume = 100,
+            .headset_volume = 100,
+            .sync_spk_headset_volume = 0,
+            .speaker_gain = 2,
+            .inactive_time = 30,
+            .disable_inactive_disconnect = 0,
+            .disable_pico_led = 0,
+            .polling_rate_mode = 0,
+            .audio_buffer_length = 64,
+            .controller_mode = 2,
+            .lock_volume = 0,
+            .disable_usb_sn = 0,
+        },
+    };
+    config.crc32 = calc_config_crc(config);
 }
 
 void config_valid() {
@@ -105,6 +131,14 @@ void config_valid() {
 void config_load() {
     memcpy(&config, flash_config(), sizeof(Config));
 
+    if (config.magic != CONFIG_MAGIC ||
+        config.size != sizeof(Config_body) ||
+        config.crc32 != calc_config_crc(config)) {
+        printf("[Config] Flash config invalid, loading defaults\n");
+        config_default();
+        return;
+    }
+
     config_valid();
 }
 
@@ -114,10 +148,16 @@ bool config_save() {
     memset(page, 0xff, sizeof(page));
     memcpy(page, &config, sizeof(Config));
 
+#if !DISABLE_SPEAKER_PROC
+    multicore_lockout_start_blocking();
+#endif
     const uint32_t interrupts = save_and_disable_interrupts();
     flash_range_erase(CONFIG_FLASH_OFFSET, FLASH_SECTOR_SIZE);
     flash_range_program(CONFIG_FLASH_OFFSET, page, sizeof(page));
     restore_interrupts(interrupts);
+#if !DISABLE_SPEAKER_PROC
+    multicore_lockout_end_blocking();
+#endif
 
     Config verify{};
     memcpy(&verify, flash_config(), sizeof(verify));

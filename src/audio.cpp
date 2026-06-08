@@ -18,6 +18,7 @@
 #include "opus.h"
 #include "utils.h"
 #include "pico/multicore.h"
+#include "pico/stdlib.h"
 #include "pico/util/queue.h"
 #include "config.h"
 #include "state_mgr.h"
@@ -164,11 +165,17 @@ static OpusEncoder *encoder;
 static WDL_Resampler resampler_audio;
 
 void core1_entry() {
+#if !DISABLE_SPEAKER_PROC
+    multicore_lockout_victim_init();
+#endif
+
     int error = 0;
     encoder = opus_encoder_create(48000, 2,OPUS_APPLICATION_AUDIO, &error);
     if (error != 0) {
         printf("[Audio] OpusEncoder create failed\n");
-        return;
+        while (true) {
+            tight_loop_contents();
+        }
     }
     opus_encoder_ctl(encoder,OPUS_SET_EXPERT_FRAME_DURATION(OPUS_FRAMESIZE_10_MS));
     opus_encoder_ctl(encoder,OPUS_SET_BITRATE(200 * 8 * 100));

@@ -162,10 +162,17 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
     (void) itf;
     (void) report_id;
     (void) report_type;
-    (void) buffer;
-    (void) bufsize;
+
+    if (buffer == nullptr) {
+        printf("[HID] Drop SET_REPORT with null buffer\n");
+        return;
+    }
 
     if (is_pico_cmd(report_id)) {
+        if (bufsize == 0) {
+            printf("[HID] Drop empty pico command report\n");
+            return;
+        }
 #if ENABLE_VERBOSE
         printf("[HID] Receive 0xf6 setting config, funcid:0x%02X\n", buffer[0]);
 #endif
@@ -175,6 +182,10 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
 
     // INTERRUPT OUT
     if (report_id == 0) {
+        if (bufsize == 0) {
+            printf("[HID] Drop empty interrupt OUT report\n");
+            return;
+        }
         switch (buffer[0]) {
             case 0x02: {
                 state_update(buffer + 1, bufsize - 1);
