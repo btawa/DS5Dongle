@@ -18,4 +18,3 @@ jobs:
       picow: true
       no_batt_led_check: true
       usbwake: true
-      audio_direct_opus: true
