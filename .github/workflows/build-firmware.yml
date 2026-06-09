@@ -219,7 +219,7 @@ jobs:
           cmake --build build/audio-timing --target ds5-bridge
           cp build/audio-timing/ds5-bridge.uf2 "artifacts/ds5-bridge-audio-timing${{ inputs.asset_suffix }}.uf2"
 
-      - name: Build direct-Opus audio timing firmware
+      - name: Build direct-Opus audio firmware
         if: inputs.audio_direct_opus
         run: |
           VERSION_ARG=()
@@ -227,8 +227,6 @@ jobs:
           cmake -S . -B build/audio-direct-opus -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DPICO_SDK_PATH="$PICO_SDK_PATH" \
-            -DENABLE_SERIAL=ON \
-            -DAUDIO_TIMING_DEBUG=ON \
             -DAUDIO_DIRECT_OPUS=ON \
             "${VERSION_ARG[@]}"
           cmake --build build/audio-direct-opus --target ds5-bridge
